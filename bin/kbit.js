@@ -4,7 +4,11 @@ var AWS = require('aws-sdk'),
   config = require('config');
 
 var appName = 'kbittest',
-  appRegion = 'sa-east-1';
+  appRegion = 'us-east-1';
+
+AWS.config.update({
+  region: appRegion
+});
 
 var createS3Bucket = function () {
   var s3 = new AWS.S3();
@@ -22,7 +26,6 @@ var createS3Bucket = function () {
       } else console.log("createS3Bucket", err, err.stack);
     })
 };
-
 var createApplicationUser = function () {
   var iam = new AWS.IAM(),
     groupName = appName + '-ApplicationGroup',
@@ -77,9 +80,57 @@ var createApplicationUser = function () {
   })
 
 };
-
 var createEC2Instance = function () {};
 var createELBInstance = function () {};
-var createRDSInstance = function () {};
+var createRDSInstance = function () {
+  vpcSecurityGroupIds = '';
 
-createS3Bucket();
+  var rds = new AWS.RDS();
+  var ec2 = new AWS.EC2();
+
+  ec2.createSecurityGroup({
+    Description: 'Default rules for RDS',
+    GroupName: 'fw-' + appName + '-db'
+  }, function (err, data) {
+    if (!err) {
+      console.log("createSecurityGroup", data.GroupId)
+
+      var params = {
+        DBInstanceClass: 'db.t2.micro',
+        DBInstanceIdentifier: appName,
+        Engine: 'mysql',
+        AllocatedStorage: 20,
+        AutoMinorVersionUpgrade: false,
+        AvailabilityZone: appRegion + 'a',
+        MasterUserPassword: 'password',
+        MasterUsername: 'root',
+        MultiAZ: false,
+        PubliclyAccessible: true,
+        StorageEncrypted: false,
+        StorageType: 'gp2',
+        VpcSecurityGroupIds: [
+          data.GroupId,
+        ]
+      };
+      rds.createDBInstance(params, function (err, data) {
+        if (err) console.log("createDBInstance", err, err.stack);
+        else console.log(data);
+      });
+
+      ec2.authorizeSecurityGroupIngress({
+        GroupName: 'fw-' + appName + '-db',
+        FromPort: 3306,
+        ToPort: 3306,
+        IpProtocol: 'TCP',
+        CidrIp: '0.0.0.0/0'
+      }, function (err, data) {
+        if (!err) console.log("authorizeSecurityGroupIngress", "PORT: 3306 enabled")
+        else console.log("authorizeSecurityGroupIngress", err, err.stack);
+      })
+    } else console.log("createSecurityGroup", err, err.stack);
+  });
+
+};
+
+//createRDSInstance();
+//createS3Bucket();
