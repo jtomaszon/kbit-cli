@@ -1,0 +1,20 @@
+{
+  "name": "kbit-cli",
+  "version": "0.0.1",
+  "description": "kbit-cli",
+  "main": "index.js",
+  "author": "Javier Tomas Zon <pro@kbit.io>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jtomaszon/kbit-cli"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.4.0",
+    "config": "^1.21.0",
+    "minimist": "latest"
+  },
+  "bin": {
+    "slack": "bin/kbit.js"
+  }
+}
