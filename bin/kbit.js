@@ -131,14 +131,73 @@ var createRDSInstance = function () {
 };
 var createEC2Instance = function () {
   var ec2 = new AWS.EC2();
-  ec2.createKeyPair({
-    KeyName: 'kbit-automation'
+  //  ec2.createKeyPair({
+  //    KeyName: 'designa-cloud'
+  //  }, function (err, data) {
+  //    if (!err) console.log("createKeyPair", data)
+  //    else console.log(err, err.stack);
+  //  }) 
+
+  var createInstance = function () {
+    var params = {
+      ImageId: 'ami-fce3c696',
+      MaxCount: 1,
+      MinCount: 1,
+      InstanceType: 't2.micro',
+      KeyName: 'designa-cloud',
+      Placement: {
+        AvailabilityZone: appRegion + 'a'
+      },
+      SecurityGroups: [
+          'fw-' + appName + '-web'
+        ]
+    };
+
+    ec2.runInstances(params, function (err, data) {
+      if (err) console.log("runInstances", err, err.stack);
+      else console.log(data);
+    });
+  }
+
+  var installWebPorts = function () {
+    var promises = [22, 80, 443, 3000].map(function (port) {
+      var params = {
+        GroupName: 'fw-' + appName + '-web',
+        FromPort: port,
+        ToPort: port,
+        IpProtocol: 'TCP',
+        CidrIp: '0.0.0.0/0'
+      }
+      return new Promise(function (resolve, reject) {
+        ec2.authorizeSecurityGroupIngress(params, function (err, data) {
+          if (err) return reject(err)
+          console.log("authorizeSecurityGroupIngress", "PORT: " + port + " enabled")
+          resolve();
+        })
+      })
+    })
+
+    Promise.all(promises)
+      .then(function () {
+        console.log("authorizeSecurityGroupIngress", "EC2 Firewall successfully installed")
+      })
+      .catch(console.error);
+  }
+
+  ec2.createSecurityGroup({
+    Description: 'Default rules for WEB',
+    GroupName: 'fw-' + appName + '-web'
   }, function (err, data) {
-    if (!err) console.log("createKeyPair", data)
-    else console.log(err, err.stack);
-  })
+    if (err) console.log("createSecurityGroup", err, err.stack);
+    else {
+      createInstance();
+      installWebPorts();
+    }
+  });
+
 };
 var createELBInstance = function () {};
 
 //createRDSInstance();
 //createS3Bucket();
+createEC2Instance();
