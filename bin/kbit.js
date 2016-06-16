@@ -80,8 +80,6 @@ var createApplicationUser = function () {
   })
 
 };
-var createEC2Instance = function () {};
-var createELBInstance = function () {};
 var createRDSInstance = function () {
   vpcSecurityGroupIds = '';
 
@@ -131,6 +129,16 @@ var createRDSInstance = function () {
   });
 
 };
+var createEC2Instance = function () {
+  var ec2 = new AWS.EC2();
+  ec2.createKeyPair({
+    KeyName: 'kbit-automation'
+  }, function (err, data) {
+    if (!err) console.log("createKeyPair", data)
+    else console.log(err, err.stack);
+  })
+};
+var createELBInstance = function () {};
 
 //createRDSInstance();
 //createS3Bucket();
