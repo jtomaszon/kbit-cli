@@ -1,35 +1,30 @@
 #!/usr/bin/env node
 
 var AWS = require('aws-sdk'),
-  config = require('config');
-
-var appName = 'kbittest',
-  appRegion = 'us-east-1';
+  config = require('config'),
+  fs = require('fs');
 
 AWS.config.update({
-  region: appRegion
+  region: config.get('App.Region'),
 });
 
 var createS3Bucket = function () {
   var s3 = new AWS.S3();
 
-  s3.createBucket({
-      Bucket: appName,
-      ACL: 'public-read',
-      CreateBucketConfiguration: {
-        LocationConstraint: appRegion
-      }
-    },
-    function (err, data) {
-      if (!err) {
-        createApplicationUser();
-      } else console.log("createS3Bucket", err, err.stack);
-    })
+  var params = {
+    Bucket: config.get('App.BucketName'),
+    ACL: 'public-read',
+    CreateBucketConfiguration: {
+      LocationConstraint: config.get('App.Region'),
+    }
+  };
+
+  s3.createBucket(params, function (err, data) {
+    if (err) console.log("createS3Bucket", err, err.stack);
+  })
 };
 var createApplicationUser = function () {
   var iam = new AWS.IAM(),
-    groupName = appName + '-ApplicationGroup',
-    policyName = appName + '-DeploymentPolicy',
     policyDocument = {
       "Version": "2012-10-17",
       "Statement": [
@@ -37,16 +32,17 @@ var createApplicationUser = function () {
           "Sid": "Stmt1465863717340",
           "Action": "s3:*",
           "Effect": "Allow",
-          "Resource": "arn:aws:s3:::" + appName + "/" + appName
-        }
-      ]
+          "Resource": "arn:aws:s3:::" + config.get('App.BucketName') + "/" + config.get('App.DefaultUser')
+            }
+          ]
     };
+
   iam.createGroup({
-    GroupName: groupName
+    GroupName: config.get('App.Name') + '-ApplicationGroup'
   }, function (err, data) {
     if (!err) {
       iam.createUser({
-        UserName: appName
+        UserName: config.get('App.DefaultUser')
       }, function (err, data) {
         if (!err) {
           iam.createAccessKey({
@@ -55,20 +51,21 @@ var createApplicationUser = function () {
             if (!err) {
               console.log("aws_access_key_id = " + data.AccessKey.AccessKeyId)
               console.log("aws_secret_access_key = " + data.AccessKey.SecretAccessKey)
-            } else console.log(err, err.stack);
+            } else console.log("createAccessKey", err, err.stack);
           })
+
           iam.putGroupPolicy({
-            GroupName: groupName,
+            GroupName: config.get('App.Name') + '-ApplicationGroup',
             PolicyDocument: JSON.stringify(policyDocument),
-            PolicyName: policyName
+            PolicyName: config.get('App.Name') + '-DeploymentPolicy',
           }, function (err, data) {
             if (!err) {
               iam.addUserToGroup({
-                GroupName: groupName,
-                UserName: appName
+                GroupName: config.get('App.Name') + '-ApplicationGroup',
+                UserName: config.get('App.DefaultUser')
               }, function (err, data) {
                 if (!err) {
-                  console.log('S3 Bucket created: ' + 'http://' + appName + '.s3.amazonaws.com/')
+                  console.log('S3 Bucket created: ' + 'http://' + config.get('App.BucketName') + '.s3.amazonaws.com/')
                 } else console.log("putGroupPolicy", err, err.stack);
               })
             } else console.log(err, err.stack);
@@ -81,27 +78,23 @@ var createApplicationUser = function () {
 
 };
 var createRDSInstance = function () {
-  vpcSecurityGroupIds = '';
-
   var rds = new AWS.RDS();
   var ec2 = new AWS.EC2();
 
   ec2.createSecurityGroup({
     Description: 'Default rules for RDS',
-    GroupName: 'fw-' + appName + '-db'
+    GroupName: 'fw-' + config.get('App.Name') + '-db'
   }, function (err, data) {
     if (!err) {
-      console.log("createSecurityGroup", data.GroupId)
-
       var params = {
-        DBInstanceClass: 'db.t2.micro',
-        DBInstanceIdentifier: appName,
-        Engine: 'mysql',
+        DBInstanceClass: config.get('App.DBInstanceType'),
+        DBInstanceIdentifier: config.get('App.Name'),
+        Engine: config.get('App.DBEngine'),
         AllocatedStorage: 20,
         AutoMinorVersionUpgrade: false,
-        AvailabilityZone: appRegion + 'a',
-        MasterUserPassword: 'password',
-        MasterUsername: 'root',
+        AvailabilityZone: config.get('App.AvailabilityZone'),
+        MasterUserPassword: config.get('App.DBPassword'),
+        MasterUsername: config.get('App.DBUsername'),
         MultiAZ: false,
         PubliclyAccessible: true,
         StorageEncrypted: false,
@@ -112,11 +105,11 @@ var createRDSInstance = function () {
       };
       rds.createDBInstance(params, function (err, data) {
         if (err) console.log("createDBInstance", err, err.stack);
-        else console.log(data);
+        else console.log("createDBInstance", "DONE");
       });
 
       ec2.authorizeSecurityGroupIngress({
-        GroupName: 'fw-' + appName + '-db',
+        GroupName: 'fw-' + config.get('App.Name') + '-db',
         FromPort: 3306,
         ToPort: 3306,
         IpProtocol: 'TCP',
@@ -131,38 +124,63 @@ var createRDSInstance = function () {
 };
 var createEC2Instance = function () {
   var ec2 = new AWS.EC2();
-  //  ec2.createKeyPair({
-  //    KeyName: 'designa-cloud'
-  //  }, function (err, data) {
-  //    if (!err) console.log("createKeyPair", data)
-  //    else console.log(err, err.stack);
-  //  }) 
+  var params = {
+    KeyName: config.get('App.KeyName')
+  }
 
+  ec2.createSecurityGroup({
+    Description: 'Default rules for WEB',
+    GroupName: 'fw-' + config.get('App.Name') + '-web'
+  }, function (err, data) {
+    if (err) console.log("createSecurityGroup", err, err.stack);
+    else createMasterKey();
+  });
+
+  var createMasterKey = function () {
+    ec2.createKeyPair(params, function (err, data) {
+      if (err) console.log(err, err.stack);
+      else {
+        fs.writeFile(process.env.HOME + '/.ssh/' + config.get('App.KeyName') + '.pem',
+          data.KeyMaterial, {
+            mode: '400'
+          },
+          function (err, result) {
+            if (err) console.log("createKeyPair", err);
+            else createInstance();
+          })
+      }
+    })
+
+  };
+  
   var createInstance = function () {
     var params = {
-      ImageId: 'ami-fce3c696',
+      ImageId: config.get('App.ImageId'),
       MaxCount: 1,
       MinCount: 1,
-      InstanceType: 't2.micro',
+      InstanceType: config.get('App.InstanceType'),
       KeyName: 'designa-cloud',
       Placement: {
-        AvailabilityZone: appRegion + 'a'
+        AvailabilityZone: config.get('App.AvailabilityZone'),
       },
       SecurityGroups: [
-          'fw-' + appName + '-web'
+          'fw-' + config.get('App.Name') + '-web'
         ]
     };
 
     ec2.runInstances(params, function (err, data) {
       if (err) console.log("runInstances", err, err.stack);
-      else console.log(data);
+      else {
+        console.log("runInstances", "DONE")
+        installWebPorts();
+      }
     });
   }
 
   var installWebPorts = function () {
     var promises = [22, 80, 443, 3000].map(function (port) {
       var params = {
-        GroupName: 'fw-' + appName + '-web',
+        GroupName: 'fw-' + config.get('App.Name') + '-web',
         FromPort: port,
         ToPort: port,
         IpProtocol: 'TCP',
@@ -184,20 +202,10 @@ var createEC2Instance = function () {
       .catch(console.error);
   }
 
-  ec2.createSecurityGroup({
-    Description: 'Default rules for WEB',
-    GroupName: 'fw-' + appName + '-web'
-  }, function (err, data) {
-    if (err) console.log("createSecurityGroup", err, err.stack);
-    else {
-      createInstance();
-      installWebPorts();
-    }
-  });
-
 };
 var createELBInstance = function () {};
 
-//createRDSInstance();
-//createS3Bucket();
 createEC2Instance();
+createS3Bucket();
+createApplicationUser();
+createRDSInstance();
